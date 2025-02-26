@@ -24,6 +24,10 @@ class DenmarkStayTrackerGUI:
         # Create the calendar
         self.create_calendar()
 
+        # Add a button to refresh the calendar
+        self.refresh_button = tk.Button(self.master, text="Refresh Calendar", command=self.create_calendar)
+        self.refresh_button.pack(pady=10)
+
     def create_calendar(self):
         """Creates a multi-year calendar grid."""
         # Clear existing widgets
@@ -33,6 +37,7 @@ class DenmarkStayTrackerGUI:
         # Display all months for last year, this year, and next year
         row = 0
         col = 0
+
         for year in range(self.start_year, self.end_year + 1):
             for month in range(1, 13):
                 self.create_month(row, col, year, month)
@@ -81,6 +86,8 @@ class DenmarkStayTrackerGUI:
         else:
             self.dates_in_denmark.add(date)
 
+    def refresh_calendar(self):
+        """Refresh the calendar."""
         self.create_calendar()
 
     def get_day_color(self, date):
