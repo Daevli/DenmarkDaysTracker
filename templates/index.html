@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h4 class="mb-0">Denmark Stay Tracker</h4>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-dark">
+                    <p>This tool helps you track your stays in Denmark to ensure you don't exceed <strong>{{ max_days }} days</strong> in a <strong>{{ lookback_period }} day</strong> period.</p>
+                    <p>Click on a day to mark it as a day spent in Denmark. Use the category buttons to specify the reason for your stay.</p>
+                </div>
+
+                <div class="mb-3">
+                    <div class="btn-group" role="group" aria-label="Day categories">
+                        <button type="button" class="btn btn-outline-primary active" data-category="work">Work</button>
+                        <button type="button" class="btn btn-outline-success" data-category="holiday">Holiday</button>
+                        <button type="button" class="btn btn-outline-info" data-category="other">Other</button>
+                    </div>
+                    <small class="text-muted ms-2">Select a category before clicking on days</small>
+                </div>
+
+                <div class="mb-3">
+                    <button type="button" class="btn btn-danger" id="resetDaysButton">Reset All Days</button>
+                    <small class="text-muted ms-2">This will remove all days marked as in Denmark</small>
+                </div>
+
+                <div class="legend mb-3">
+                    <span class="badge bg-success me-2">Work</span>
+                    <span class="badge bg-info me-2">Holiday</span>
+                    <span class="badge bg-warning me-2">Other</span>
+                    <span class="badge bg-danger me-2">Warning (exceeds {{ max_days }} days)</span>
+                    <span class="badge bg-secondary me-2">Past day</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
+        <ul class="nav nav-tabs" id="yearTabs" role="tablist">
+            {% for year in calendar_data %}
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if year == current_year %}active{% endif %}" 
+                        id="year-{{ year }}-tab" 
+                        data-bs-toggle="tab" 
+                        data-bs-target="#year-{{ year }}" 
+                        type="button" 
+                        role="tab" 
+                        aria-controls="year-{{ year }}" 
+                        aria-selected="{% if year == current_year %}true{% else %}false{% endif %}">
+                    {{ year }}
+                </button>
+            </li>
+            {% endfor %}
+        </ul>
+
+        <div class="tab-content" id="yearTabsContent">
+            {% for year, months in calendar_data.items() %}
+            <div class="tab-pane fade {% if year == current_year %}show active{% endif %}" 
+                 id="year-{{ year }}" 
+                 role="tabpanel" 
+                 aria-labelledby="year-{{ year }}-tab">
+
+                <div class="row mt-3">
+                    {% for month_num, month_data in months.items() %}
+                    <div class="col-md-4 mb-4" data-month="{{ month_num }}">
+                        <div class="card">
+                            <div class="card-header bg-dark text-white">
+                                <h5 class="mb-0">{{ month_data.name }} {{ year }}</h5>
+                            </div>
+                            <div class="card-body p-2">
+                                <table class="table table-bordered calendar-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Mon</th>
+                                            <th>Tue</th>
+                                            <th>Wed</th>
+                                            <th>Thu</th>
+                                            <th>Fri</th>
+                                            <th>Sat</th>
+                                            <th>Sun</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% set days = month_data.days %}
+                                        {% for i in range(0, days|length, 7) %}
+                                        <tr>
+                                            {% for j in range(7) %}
+                                                {% if i + j < days|length %}
+                                                    {% set day = days[i + j] %}
+                                                    <td class="{% if day.day %}
+                                                               {% if day.in_denmark %}
+                                                                   {% if day.category == 'work' %}bg-success text-white{% endif %}
+                                                                   {% if day.category == 'holiday' %}bg-info text-white{% endif %}
+                                                                   {% if day.category == 'other' %}bg-warning{% endif %}
+                                                                   {% if day.warning %}border border-danger border-3{% endif %}
+                                                               {% endif %}
+                                                               {% if day.past %}bg-opacity-50{% endif %}
+                                                               {% endif %}"
+                                                        {% if day.day %}
+                                                        data-date="{{ day.date }}"
+                                                        data-accumulated="{{ day.accumulated }}"
+                                                        data-in-denmark="{{ day.in_denmark|lower }}"
+                                                        data-category="{{ day.category }}"
+                                                        {% endif %}>
+                                                        {% if day.day %}
+                                                            <div class="day-cell" title="Days in Denmark: {{ day.accumulated }}">
+                                                                {{ day.day }}
+                                                                {% if day.in_denmark %}
+                                                                <span class="badge rounded-pill bg-light text-dark">{{ day.accumulated }}</span>
+                                                                {% endif %}
+                                                            </div>
+                                                        {% endif %}
+                                                    </td>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Set current year for tab selection
+    const currentYear = new Date().getFullYear();
+    document.addEventListener('DOMContentLoaded', function() {
+        // Make sure the current year tab is active
+        const currentYearTab = document.getElementById(`year-${currentYear}-tab`);
+        if (currentYearTab) {
+            currentYearTab.click();
+        }
+    });
+</script>
+{% endblock %}
