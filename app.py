@@ -1,17 +1,32 @@
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, send_file
 import pandas as pd
-from datetime import date, timedelta
-import matplotlib
-import matplotlib.pyplot as plt
-import numpy as np
+from datetime import datetime, timedelta, date
 import calendar
+import json
+import io
+import os
 
-matplotlib.use('TkAgg')
+app = Flask(__name__)
+app.secret_key = 'denmark_days_tracker_secret_key'  # Required for session
 
-# Function to calculate the accumulated days in Denmark
-def calculate_days_in_denmark(datesInDenmark):
-    # Convert the input list to a set of datetime objects for fast lookup
-    denmark_days = set(pd.to_datetime(datesInDenmark))
+# Constants
+LOOKBACK_PERIOD = 180  # 180 days lookback period
+MAX_DAYS_IN_DENMARK = 42  # Maximum 42 days allowed in Denmark
 
+# Initialize session data if not present
+def init_session_data():
+    if 'days_in_denmark' not in session:
+        session['days_in_denmark'] = {}
+
+    # Convert string keys back to datetime objects for processing
+    days_data = {}
+    for date_str, data in session['days_in_denmark'].items():
+        days_data[date_str] = data
+
+    return days_data
+
+# Calculate days in Denmark over the lookback period
+def calculate_days_in_denmark(days_data):
     # Define the range of dates to cover the last 365 days and future 365 days
     end_date = date.today() + timedelta(days=365)
     start_date = date.today() - timedelta(days=365)
@@ -23,13 +38,15 @@ def calculate_days_in_denmark(datesInDenmark):
     df = pd.DataFrame({'Date': all_dates})
 
     # Add the InDenmark column
-    df['InDenmark'] = df['Date'].isin(denmark_days)
+    df['InDenmark'] = df['Date'].apply(
+        lambda x: x.strftime('%Y-%m-%d') in days_data
+    )
 
     # Calculate the Accumulated column
     accumulated = []
     for i in range(len(df)):
-        # Define the 183-day window ending on the current date
-        window_start = df.loc[i, 'Date'] - timedelta(days=182)
+        # Define the lookback window ending on the current date
+        window_start = df.loc[i, 'Date'] - timedelta(days=LOOKBACK_PERIOD-1)
         window_end = df.loc[i, 'Date']
 
         # Count the number of days in Denmark within the window
@@ -38,136 +55,207 @@ def calculate_days_in_denmark(datesInDenmark):
 
     df['Accumulated'] = accumulated
 
+    # Add category information
+    df['Category'] = df['Date'].apply(
+        lambda x: days_data.get(x.strftime('%Y-%m-%d'), {}).get('category', 'none')
+    )
+
     return df
 
+@app.route('/')
+def index():
+    days_data = init_session_data()
+    df = calculate_days_in_denmark(days_data)
 
-def plot_calendar(df):
-    # Extract year, month, and day information
-    df['Year'] = df['Date'].dt.year
-    df['Month'] = df['Date'].dt.month
-    df['Day'] = df['Date'].dt.day
+    # Prepare calendar data for the template
+    calendar_data = prepare_calendar_data(df, days_data)
 
-    # Get unique years and months
-    unique_years = sorted(df['Year'].unique())
-    unique_months = sorted(df['Month'].unique())
+    # Get current year for active tab
+    current_year = datetime.now().year
 
-    # Create a calendar visualization for each year
-    for year in unique_years:
-        fig, axes = plt.subplots(len(unique_months), 1, figsize=(12, len(unique_months) * 2))
-        fig.suptitle(f"Calendar for {year}", fontsize=16)
+    return render_template('index.html',
+                          calendar_data=calendar_data,
+                          max_days=MAX_DAYS_IN_DENMARK,
+                          lookback_period=LOOKBACK_PERIOD,
+                          current_year=current_year)
 
-        if len(unique_months) == 1:
-            axes = [axes]  # Ensure axes is always iterable
-
-        for i, month in enumerate(unique_months):
-            ax = axes[i]
-
-            # Filter the DataFrame for the current year and month
-            month_data = df[(df['Year'] == year) & (df['Month'] == month)]
-            days_in_month = calendar.monthrange(year, month)[1]
-
-            # Create an array to hold coloring information
-            calendar_days = np.zeros(days_in_month)
-            for _, row in month_data.iterrows():
-                if row['InDenmark']:
-                    calendar_days[row['Day'] - 1] = 1
-
-            # Plot the month data
-            ax.imshow(calendar_days.reshape(1, -1), cmap='cool', aspect='auto', extent=[1, days_in_month + 1, 0, 1])
-            ax.set_xticks(range(1, days_in_month + 1))
-            ax.set_yticks([])
-            ax.set_xlim(1, days_in_month + 1)
-            ax.set_title(calendar.month_name[month], fontsize=12)
-            ax.set_xlabel('Days')
-
-        plt.tight_layout()
-        plt.show()
-
-
-def plot_compact_calendar(df):
-    # Extract year, month, and day information
+def prepare_calendar_data(df, days_data):
+    # Extract year and month information
     df['Year'] = df['Date'].dt.year
     df['Month'] = df['Date'].dt.month
     df['Day'] = df['Date'].dt.day
     df['Weekday'] = df['Date'].dt.weekday  # Monday=0, Sunday=6
 
-    # Get unique years
-    unique_years = sorted(df['Year'].unique())
+    # Get unique years and months
+    current_year = datetime.now().year
+    years = [current_year - 1, current_year, current_year + 1]
 
-    for year in unique_years:
-        # Filter the DataFrame for the current year
-        year_data = df[df['Year'] == year]
+    calendar_data = {}
 
-        # Create a figure for the year
-        fig, ax = plt.subplots(4, 3, figsize=(12, 10))
-        fig.suptitle(f"Compact Calendar for {year}", fontsize=16)
+    for year in years:
+        calendar_data[year] = {}
 
         for month in range(1, 13):
-            # Get the corresponding subplot
-            row, col = divmod(month - 1, 3)
-            ax_month = ax[row, col]
-
             # Get the days for the month
-            month_data = year_data[year_data['Month'] == month]
+            month_data = df[(df['Year'] == year) & (df['Month'] == month)]
+
+            # Get the first day of the month and the number of days
+            first_day = datetime(year, month, 1).weekday()
             days_in_month = calendar.monthrange(year, month)[1]
 
-            # Create a grid for the month
-            month_grid = np.zeros((6, 7))  # 6 rows (max weeks) x 7 columns (days)
-            for _, row_data in month_data.iterrows():
-                week, weekday = divmod(row_data['Day'] - 1, 7)
-                if row_data['InDenmark']:
-                    month_grid[week, row_data['Weekday']] = 1
+            # Prepare month data
+            month_days = []
+            day_counter = 1
 
-            # Display the grid
-            ax_month.imshow(month_grid, cmap="cool", aspect="auto", alpha=0.8)
+            # Add empty cells for days before the 1st of the month
+            for _ in range(first_day):
+                month_days.append({
+                    'day': '',
+                    'in_denmark': False,
+                    'accumulated': 0,
+                    'category': 'none',
+                    'warning': False
+                })
 
-            # Add day labels
-            ax_month.set_xticks(range(7))
-            ax_month.set_xticklabels(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], fontsize=8)
-            ax_month.set_yticks(range(6))
-            ax_month.set_yticklabels([f"Week {i + 1}" for i in range(6)], fontsize=8)
+            # Add the actual days of the month
+            while day_counter <= days_in_month:
+                day_date = datetime(year, month, day_counter).date()
+                day_str = day_date.strftime('%Y-%m-%d')
 
-            # Add the month title
-            ax_month.set_title(calendar.month_name[month], fontsize=12)
+                day_data = month_data[month_data['Day'] == day_counter]
 
-            # Hide grid lines and ticks
-            ax_month.grid(False)
-            ax_month.tick_params(left=False, bottom=False)
+                if not day_data.empty:
+                    in_denmark = bool(day_data['InDenmark'].values[0])
+                    accumulated = int(day_data['Accumulated'].values[0])
+                    category = days_data.get(day_str, {}).get('category', 'none')
+                    warning = accumulated > MAX_DAYS_IN_DENMARK
+                else:
+                    in_denmark = False
+                    accumulated = 0
+                    category = 'none'
+                    warning = False
 
-        # Adjust layout
-        plt.tight_layout(rect=[0, 0, 1, 0.96])
-        plt.show()
+                month_days.append({
+                    'day': day_counter,
+                    'date': day_str,
+                    'in_denmark': in_denmark,
+                    'accumulated': accumulated,
+                    'category': category,
+                    'warning': warning,
+                    'past': day_date < date.today()
+                })
 
+                day_counter += 1
 
-# Example input
-dates_in_denmark = ['2024-02-18', '2024-02-19', '2024-02-20', '2024-02-21', '2024-02-22', '2024-02-23', '2024-02-24',
-                    '2024-04-14', '2024-04-15', '2024-04-16', '2024-04-17', '2024-04-18', '2024-04-19', '2024-04-20',
-                    '2024-05-04',
-                    '2024-05-08', '2024-05-09', '2024-05-10', '2024-05-11', '2024-05-12',
-                    '2024-06-02', '2024-06-03', '2024-06-04', '2024-06-05', '2024-06-06', '2024-06-07', '2024-06-08',
-                    '2024-08-09', '2024-08-10', '2024-08-11', '2024-08-12', '2024-08-13', '2024-08-14', '2024-08-15',
-                        '2024-08-16', '2024-08-17', '2024-08-18', '2024-08-19', '2024-08-20', '2024-08-21', '2024-08-22',
-                        '2024-08-23', '2024-08-24', '2024-08-25', '2024-08-26',
-                    '2024-11-03', '2024-11-04', '2024-11-05', '2024-11-06', '2024-11-07', '2024-11-08', '2024-11-09',
-                    '2024-12-15', '2024-12-16', '2024-12-17', '2024-12-18', '2024-12-19', '2024-12-20', '2024-12-21',
-                        '2024-12-22', '2024-12-23', '2024-12-24', '2024-12-25', '2024-12-26', '2024-12-27', '2024-12-28',
-                        '2024-12-29'
-                    ]
+            calendar_data[year][month] = {
+                'name': calendar.month_name[month],
+                'days': month_days
+            }
 
-futureDaysLocked = ['2024-05-18', '2024-05-19', '2024-05-20', '2024-05-21', '2024-05-22', '2024-05-23', '2024-05-24']
+    return calendar_data
 
-trialDays = ['2025-02-09', '2025-02-10', '2025-02-11', '2025-02-12', '2025-02-13', '2025-02-14', '2025-02-15']
+@app.route('/toggle_day', methods=['POST'])
+def toggle_day():
+    data = request.get_json()
+    day_date = data.get('date')
+    category = data.get('category', 'work')  # Default to 'work' if not specified
 
-# Weeks that are no good
-# trialDays = ['2025-01-26', '2025-01-27', '2025-01-28', '2025-01-29', '2025-01-30', '2025-01-31', '2025-02-01']
+    days_data = init_session_data()
 
-# Call the function
-df_result = calculate_days_in_denmark(dates_in_denmark + futureDaysLocked + trialDays)
+    if day_date in days_data:
+        # If the day is already in Denmark with the same category, remove it
+        if days_data[day_date].get('category') == category:
+            del days_data[day_date]
+        else:
+            # Update the category
+            days_data[day_date] = {'category': category}
+    else:
+        # Add the day with the specified category
+        days_data[day_date] = {'category': category}
 
-badDays = df_result[df_result['Accumulated'] >= 41]
+    session['days_in_denmark'] = days_data
 
-# Display the result
-# print(df_result[df_result['Accumulated'] >= 40])
-# Call the function
-plot_compact_calendar(df_result)
-# plot_calendar(df_result)
+    # Recalculate and return updated data
+    df = calculate_days_in_denmark(days_data)
+    calendar_data = prepare_calendar_data(df, days_data)
+
+    return jsonify({
+        'success': True,
+        'calendar_data': calendar_data
+    })
+
+@app.route('/export_schedule')
+def export_schedule():
+    days_data = init_session_data()
+
+    # Create a DataFrame from the days data
+    export_data = []
+    for date_str, data in days_data.items():
+        export_data.append({
+            'date': date_str,
+            'category': data.get('category', 'work')
+        })
+
+    df = pd.DataFrame(export_data)
+
+    # Create a CSV in memory
+    output = io.StringIO()
+    df.to_csv(output, index=False)
+
+    # Create a BytesIO object from the StringIO object
+    mem = io.BytesIO()
+    mem.write(output.getvalue().encode('utf-8'))
+    mem.seek(0)
+
+    return send_file(
+        mem,
+        as_attachment=True,
+        download_name='denmark_schedule.csv',
+        mimetype='text/csv'
+    )
+
+@app.route('/import_schedule', methods=['POST'])
+def import_schedule():
+    if 'file' not in request.files:
+        return redirect(url_for('index'))
+
+    file = request.files['file']
+
+    if file.filename == '':
+        return redirect(url_for('index'))
+
+    if file and file.filename.endswith('.csv'):
+        # Read the CSV file
+        df = pd.read_csv(file)
+
+        # Update the session data
+        days_data = init_session_data()
+
+        for _, row in df.iterrows():
+            date_str = row['date']
+            category = row.get('category', 'work')
+            days_data[date_str] = {'category': category}
+
+        session['days_in_denmark'] = days_data
+
+    return redirect(url_for('index'))
+
+@app.route('/reset_days', methods=['POST'])
+def reset_days():
+    # Clear the days_in_denmark session data
+    session['days_in_denmark'] = {}
+
+    # Initialize empty data
+    days_data = {}
+
+    # Recalculate and return updated data
+    df = calculate_days_in_denmark(days_data)
+    calendar_data = prepare_calendar_data(df, days_data)
+
+    return jsonify({
+        'success': True,
+        'calendar_data': calendar_data
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True)
